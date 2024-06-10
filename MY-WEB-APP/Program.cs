@@ -22,7 +22,7 @@ builder.Services.AddScoped<IDataService, DataService>();
 builder.Services.AddScoped<IDataTransformationService, DataTransformationService>();
 
 // Register the RabbitMQ consumer service as a hosted service
-builder.Services.AddHostedService<RabbitMQConsumerService>();
+builder.Services.AddSingleton<IHostedService, RabbitMQConsumerService>();
 
 var app = builder.Build();
 
