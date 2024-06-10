@@ -15,15 +15,14 @@ namespace MY_WEB_APP.Services
     public class RabbitMQConsumerService : BackgroundService
     {
         private readonly ILogger<RabbitMQConsumerService> _logger;
-        private readonly IDataService _dataService;
+        private readonly IServiceProvider _serviceProvider;
         private IConnection _connection;
         private IChannel _channel;
 
-        public RabbitMQConsumerService(ILogger<RabbitMQConsumerService> logger, IDataService dataService)
+        public RabbitMQConsumerService(ILogger<RabbitMQConsumerService> logger, IServiceProvider serviceProvider)
         {
             _logger = logger;
-            _dataService = dataService;
-            InitializeRabbitMQ();
+            _serviceProvider = serviceProvider;
         }
 
         private async Task InitializeRabbitMQ()
@@ -41,11 +40,12 @@ namespace MY_WEB_APP.Services
             _logger.LogInformation("RabbitMQ connection established and queue declared.");
         }
 
-        protected override Task ExecuteAsync(CancellationToken stoppingToken)
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             stoppingToken.ThrowIfCancellationRequested();
+            await InitializeRabbitMQ();
 
-            var consumer = new EventingBasicConsumer(_channel);
+            var consumer = new AsyncEventingBasicConsumer(_channel);
             consumer.Received += async (model, ea) =>
             {
                 var body = ea.Body.ToArray();
@@ -53,23 +53,28 @@ namespace MY_WEB_APP.Services
 
                 _logger.LogInformation($"Received message: {message}");
 
-                try
+                using (var scope = _serviceProvider.CreateScope())
                 {
-                    var rawData = JsonConvert.DeserializeObject<RawData>(message);
-                    await _dataService.TransformAndSaveDataAsync(rawData);
-                    _logger.LogInformation("Message processed successfully.");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError($"Message processing failed: {ex.Message}");
+                    var dataService = scope.ServiceProvider.GetRequiredService<IDataService>();
+
+                    try
+                    {
+                        var rawData = JsonConvert.DeserializeObject<RawData>(message);
+                        await dataService.TransformAndSaveDataAsync(rawData);
+                        _logger.LogInformation("Message processed successfully.");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError($"Message processing failed: {ex.Message}");
+                    }
                 }
             };
 
-            _channel.BasicConsumeAsync(queue: "raw_data_queue",
-                                  autoAck: true,
+            await _channel.BasicConsumeAsync(queue: "raw_data_queue",
+                                  autoAck: false,
                                   consumer: consumer);
 
-            return Task.CompletedTask;
+            await Task.CompletedTask;
         }
 
         public override void Dispose()
